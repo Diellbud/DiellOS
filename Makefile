@@ -44,6 +44,7 @@ OBJS := $(BUILD_DIR)/boot.o \
         $(BUILD_DIR)/partition.o \
         $(BUILD_DIR)/fat16.o \
         $(BUILD_DIR)/paging.o
+
 all: $(ISO_IMAGE)
 
 $(BUILD_DIR):
@@ -58,61 +59,79 @@ $(BUILD_DIR)/kernel.o: src/kernel.c | $(BUILD_DIR)
 $(BUILD_DIR)/vga.o: src/vga.c src/vga.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/gdt.o: src/arch/i386/gdt.c
+$(BUILD_DIR)/gdt.o: src/arch/i386/gdt.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/gdt_flush.o: src/arch/i386/gdt_flush.s
+$(BUILD_DIR)/gdt_flush.o: src/arch/i386/gdt_flush.s | $(BUILD_DIR)
 	$(AS) -f elf32 $< -o $@
 
-$(BUILD_DIR)/idt.o: src/arch/i386/idt.c
+$(BUILD_DIR)/idt.o: src/arch/i386/idt.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/idt_load.o: src/arch/i386/idt_load.s
+$(BUILD_DIR)/idt_load.o: src/arch/i386/idt_load.s | $(BUILD_DIR)
 	$(AS) -f elf32 $< -o $@
 
-$(BUILD_DIR)/isr.o: src/arch/i386/isr.c
+$(BUILD_DIR)/isr.o: src/arch/i386/isr.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/isr_stubs.o: src/arch/i386/isr_stubs.s
+$(BUILD_DIR)/isr_stubs.o: src/arch/i386/isr_stubs.s | $(BUILD_DIR)
 	$(AS) -f elf32 $< -o $@
 
-$(BUILD_DIR)/io.o: src/arch/i386/io.c
+$(BUILD_DIR)/io.o: src/arch/i386/io.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/pic.o: src/arch/i386/pic.c
+$(BUILD_DIR)/pic.o: src/arch/i386/pic.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/irq.o: src/arch/i386/irq.c
+$(BUILD_DIR)/irq.o: src/arch/i386/irq.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/irq_stubs.o: src/arch/i386/irq_stubs.s
+$(BUILD_DIR)/irq_stubs.o: src/arch/i386/irq_stubs.s | $(BUILD_DIR)
 	$(AS) -f elf32 $< -o $@
 
-$(BUILD_DIR)/timer.o: src/drivers/timer.c
+$(BUILD_DIR)/timer.o: src/drivers/timer.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/keyboard.o: src/drivers/keyboard.c
+$(BUILD_DIR)/keyboard.o: src/drivers/keyboard.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/print.o: src/debug/print.c
+$(BUILD_DIR)/print.o: src/debug/print.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/panic.o: src/debug/panic.c
+$(BUILD_DIR)/panic.o: src/debug/panic.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/console.o: src/console.c src/console.h
+$(BUILD_DIR)/console.o: src/console.c src/console.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/shell.o: src/shell.c src/shell.h
+$(BUILD_DIR)/shell.o: src/shell.c src/shell.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/string.o: src/lib/string.c src/lib/string.h
+$(BUILD_DIR)/string.o: src/lib/string.c src/lib/string.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/vfs.o: src/fs/vfs.c src/fs/vfs.h
+$(BUILD_DIR)/vfs.o: src/fs/vfs.c src/fs/vfs.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/initrd.o: src/fs/initrd.c src/fs/initrd.h src/boot/multiboot.h
+$(BUILD_DIR)/initrd.o: src/fs/initrd.c src/fs/initrd.h src/boot/multiboot.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ata.o: src/drivers/ata.c src/drivers/ata.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/mbr.o: src/disk/mbr.c src/disk/mbr.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/donut.o: src/apps/donut.c src/apps/donut.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/partition.o: src/disk/partition.c src/disk/partition.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/fat16.o: src/fs/fat16.c src/fs/fat16.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/paging.o: src/memory/paging.c src/memory/paging.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(KERNEL_ELF): $(OBJS) linker.ld
@@ -126,24 +145,6 @@ $(ISO_IMAGE): $(KERNEL_ELF) $(INITRD_IMG)
 	cp $(KERNEL_ELF) $(ISO_DIR)/boot/kernel.elf
 	cp $(INITRD_IMG) $(ISO_DIR)/boot/initrd.img
 	grub-mkrescue -o $(ISO_IMAGE) $(ISO_DIR)
-
-$(BUILD_DIR)/ata.o: src/drivers/ata.c src/drivers/ata.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/mbr.o: src/disk/mbr.c src/disk/mbr.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/donut.o: src/apps/donut.c src/apps/donut.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/partition.o: src/disk/partition.c src/disk/partition.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/fat16.o: src/fs/fat16.c src/fs/fat16.h
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/paging.o: src/memory/paging.c src/memory/paging.h
-	$(CC) $(CFLAGS) -c $< -o $@
 
 check: $(KERNEL_ELF)
 	@echo "Checking multiboot header..."
