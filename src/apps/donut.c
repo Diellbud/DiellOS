@@ -14,6 +14,7 @@
 
 #define THETA_STEP   7
 #define PHI_STEP     3
+#define FRAME_COUNT  128
 
 #define K2_Z         5
 #define K1_X         30
@@ -23,6 +24,11 @@
 
 static const char shades[] = ".,-~:;=!*#$@";
 #define SHADE_N ((int)(sizeof(shades) - 1))
+
+#define FRAME_CELLS (SCREEN_W * SCREEN_H)
+
+static uint16_t frame_cache[FRAME_COUNT][FRAME_CELLS];
+static int frame_cache_ready = 0;
 
 static const int16_t sin_q[65] = {
     0, 402, 803, 1205, 1605, 2005, 2404, 2801, 3196, 3589, 3980, 4369, 4755,
@@ -77,12 +83,17 @@ static void vga_fill(char ch, uint8_t attr) {
     }
 }
 
-static void donut_frame(uint8_t A, uint8_t B) {
-    static char out[SCREEN_W * SCREEN_H];
-    static uint16_t zbuf[SCREEN_W * SCREEN_H];
+static void frame_copy_to_vga(const uint16_t* frame) {
+    for (int i = 0; i < FRAME_CELLS; i++) {
+        VGA_BASE[i] = frame[i];
+    }
+}
 
-    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
-        out[i] = ' ';
+static void donut_render_frame(uint8_t A, uint8_t B, uint16_t* frame) {
+    static uint16_t zbuf[FRAME_CELLS];
+
+    for (int i = 0; i < FRAME_CELLS; i++) {
+        frame[i] = (uint16_t)(0x0700 | ' ');
         zbuf[i] = 0;
     }
 
@@ -159,36 +170,47 @@ static void donut_frame(uint8_t A, uint8_t B) {
                     }
                 }
 
-                out[idx] = shades[lum];
+                frame[idx] = (uint16_t)(0x0700 | (uint8_t)shades[lum]);
             }
         }
     }
 
-    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
-        VGA_BASE[i] = (uint16_t)(0x0700 | (uint8_t)out[i]);
+    frame[0 * SCREEN_W + 0] = (uint16_t)(0x0F00 | 'D');
+    frame[0 * SCREEN_W + 1] = (uint16_t)(0x0F00 | 'o');
+    frame[0 * SCREEN_W + 2] = (uint16_t)(0x0F00 | 'n');
+    frame[0 * SCREEN_W + 3] = (uint16_t)(0x0F00 | 'u');
+    frame[0 * SCREEN_W + 4] = (uint16_t)(0x0F00 | 't');
+}
+
+static void donut_build_cache(void) {
+    if (frame_cache_ready) {
+        return;
     }
 
-    VGA_BASE[0 * SCREEN_W + 0] = (uint16_t)(0x0F00 | 'D');
-    VGA_BASE[0 * SCREEN_W + 1] = (uint16_t)(0x0F00 | 'o');
-    VGA_BASE[0 * SCREEN_W + 2] = (uint16_t)(0x0F00 | 'n');
-    VGA_BASE[0 * SCREEN_W + 3] = (uint16_t)(0x0F00 | 'u');
-    VGA_BASE[0 * SCREEN_W + 4] = (uint16_t)(0x0F00 | 't');
+    for (int i = 0; i < FRAME_COUNT; i++) {
+        uint8_t A = (uint8_t)(i * 4);
+        uint8_t B = (uint8_t)(i * 2);
+        donut_render_frame(A, B, frame_cache[i]);
+    }
+
+    frame_cache_ready = 1;
 }
 
 void donut_run(uint32_t duration_ticks) {
     (void)duration_ticks;
 
-    uint8_t A = 0, B = 0;
+    int frame_index = 0;
 
     console_clear_cancel();
     vga_fill(' ', 0x07);
+    donut_build_cache();
 
     while (!console_cancel_requested()) {
-        donut_frame(A, B);
-
-        A = (uint8_t)(A + 4);
-        B = (uint8_t)(B + 2);
-
+        frame_copy_to_vga(frame_cache[frame_index]);
+        frame_index++;
+        if (frame_index >= FRAME_COUNT) {
+            frame_index = 0;
+        }
         delay_spin(1500000);
     }
 
