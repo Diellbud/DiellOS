@@ -41,6 +41,7 @@ OBJS := $(BUILD_DIR)/boot.o \
         $(BUILD_DIR)/ata.o \
         $(BUILD_DIR)/mbr.o \
         $(BUILD_DIR)/donut.o \
+        $(BUILD_DIR)/minesweeper.o \
         $(BUILD_DIR)/partition.o \
         $(BUILD_DIR)/fat16.o \
         $(BUILD_DIR)/paging.o
@@ -123,6 +124,9 @@ $(BUILD_DIR)/mbr.o: src/disk/mbr.c src/disk/mbr.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/donut.o: src/apps/donut.c src/apps/donut.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/minesweeper.o: src/apps/minesweeper.c src/apps/minesweeper.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/partition.o: src/disk/partition.c src/disk/partition.h | $(BUILD_DIR)

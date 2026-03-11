@@ -10,6 +10,7 @@
 #include "drivers/ata.h"
 #include "disk/mbr.h"
 #include "apps/donut.h"
+#include "apps/minesweeper.h"
 
 
 #include "disk/partition.h"
@@ -38,6 +39,7 @@ static void cmd_help(const char* args) {
         "  fatls\n"
         "  fatcat <file>\n"
         "  donut\n"
+        "  minesweeper\n"
         "  mbr\n"
         "  cat <file>\n"
         "  clear\n"
@@ -281,6 +283,12 @@ static void cmd_donut(const char* args) {
     vga_puts("[donut] returned\n");
 }
 
+static void cmd_minesweeper(const char* args) {
+    (void)args;
+    vga_puts("[minesweeper] starting...\n");
+    minesweeper_run();
+}
+
 static void cmd_parts(const char* args) {
     (void)args;
 
@@ -363,9 +371,10 @@ struct command {
 static const struct command commands[] = {
     {"parts", cmd_parts},
 {"mount", cmd_mount},
-{"fatls", cmd_fatls},
+    {"fatls", cmd_fatls},
 {"fatcat", cmd_fatcat},
     {"donut", cmd_donut},
+    {"minesweeper", cmd_minesweeper},
     {"mbr", cmd_mbr},
     {"help",  cmd_help},
     {"clear", cmd_clear},
