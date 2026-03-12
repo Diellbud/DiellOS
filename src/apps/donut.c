@@ -1,34 +1,31 @@
 #include "donut.h"
 #include <stdint.h>
 #include "../console.h"
+#include "../vga.h"
 
-#define VGA_BASE     ((volatile uint16_t*)0xB8000)
-#define SCREEN_W     80
-#define SCREEN_H     25
-#define RENDER_W     80
-#define RENDER_H     22
-#define START_ROW    1
+#define MAX_SCREEN_W 160
+#define MAX_SCREEN_H 64
+#define MAX_GFX_W    256
+#define MAX_GFX_H    192
 
 #define FIX_SHIFT    14
 #define FIX_ONE      (1 << FIX_SHIFT)
 
-#define THETA_STEP   7
-#define PHI_STEP     3
+#define THETA_STEP   3
+#define PHI_STEP     2
 #define FRAME_COUNT  128
 
 #define K2_Z         5
-#define K1_X         30
-#define K1_Y         24
-
-#define ZOOM_Q14     4681
+#define ZOOM_Q14     5500
 
 static const char shades[] = ".,-~:;=!*#$@";
 #define SHADE_N ((int)(sizeof(shades) - 1))
 
-#define FRAME_CELLS (SCREEN_W * SCREEN_H)
+#define FRAME_CELLS (MAX_SCREEN_W * MAX_SCREEN_H)
+#define GFX_FRAME_CELLS (MAX_GFX_W * MAX_GFX_H)
 
-static uint16_t frame_cache[FRAME_COUNT][FRAME_CELLS];
-static int frame_cache_ready = 0;
+static uint16_t g_char_prev[FRAME_CELLS];
+static int g_char_prev_init = 0;
 
 static const int16_t sin_q[65] = {
     0, 402, 803, 1205, 1605, 2005, 2404, 2801, 3196, 3589, 3980, 4369, 4755,
@@ -76,32 +73,210 @@ static void delay_spin(uint32_t iters) {
     }
 }
 
-static void vga_fill(char ch, uint8_t attr) {
-    uint16_t cell = ((uint16_t)attr << 8) | (uint16_t)(uint8_t)ch;
-    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
-        VGA_BASE[i] = cell;
+static void screen_fill(char ch, uint8_t attr) {
+    uint16_t cols = vga_cols();
+    uint16_t rows = vga_rows();
+    for (uint16_t y = 0; y < rows; y++) {
+        for (uint16_t x = 0; x < cols; x++) {
+            vga_write_cell(y, x, ch, attr);
+        }
     }
 }
 
-static void frame_copy_to_vga(const uint16_t* frame) {
-    for (int i = 0; i < FRAME_CELLS; i++) {
-        VGA_BASE[i] = frame[i];
+static void frame_copy_to_screen(const uint16_t* frame, uint16_t cols, uint16_t rows) {
+    for (uint16_t y = 0; y < rows; y++) {
+        for (uint16_t x = 0; x < cols; x++) {
+            uint16_t cell = frame[y * cols + x];
+            vga_write_cell(y, x, (char)(cell & 0xFF), (uint8_t)((cell >> 8) & 0xFF));
+        }
     }
 }
 
-static void donut_render_frame(uint8_t A, uint8_t B, uint16_t* frame) {
-    static uint16_t zbuf[FRAME_CELLS];
+static void frame_copy_to_screen_graphics(const uint8_t* lumframe, uint16_t cols, uint16_t rows) {
+    uint16_t pixel_w = vga_pixel_width();
+    uint16_t pixel_h = vga_pixel_height();
+    uint16_t cell_w = cols ? (uint16_t)(pixel_w / cols) : 0;
+    uint16_t cell_h = rows ? (uint16_t)(pixel_h / rows) : 0;
 
-    for (int i = 0; i < FRAME_CELLS; i++) {
+    if (cell_w == 0 || cell_h == 0) return;
+
+    for (uint16_t y = 0; y < rows; y++) {
+        for (uint16_t x = 0; x < cols; x++) {
+            uint8_t lum = lumframe[y * cols + x];
+            uint32_t shade = 0;
+
+            if (lum != 0) {
+                uint32_t c = 18u + (uint32_t)lum * 18u;
+                if (c > 255u) c = 255u;
+                shade = (c << 16) | ((c + 12u > 255u ? 255u : c + 12u) << 8) | c;
+            }
+
+            vga_fill_rect((uint16_t)(x * cell_w), (uint16_t)(y * cell_h), cell_w, cell_h, shade);
+        }
+    }
+}
+
+static void frame_copy_to_screen_dots(const uint8_t* lumframe, uint16_t cols, uint16_t rows, int scanlines) {
+    uint16_t pixel_w = vga_pixel_width();
+    uint16_t pixel_h = vga_pixel_height();
+    uint16_t cell_w = cols ? (uint16_t)(pixel_w / cols) : 0;
+    uint16_t cell_h = rows ? (uint16_t)(pixel_h / rows) : 0;
+
+    if (cell_w == 0 || cell_h == 0) return;
+
+    for (uint16_t y = 0; y < rows; y++) {
+        for (uint16_t x = 0; x < cols; x++) {
+            uint8_t lum = lumframe[y * cols + x];
+            uint16_t px = (uint16_t)(x * cell_w);
+            uint16_t py = (uint16_t)(y * cell_h);
+
+            vga_fill_rect(px, py, cell_w, cell_h, 0x000000);
+
+            if (lum == 0) continue;
+
+            uint16_t dot_w = (uint16_t)(cell_w > 2 ? (scanlines ? cell_w : cell_w - 1u) : 1u);
+            uint16_t dot_h = (uint16_t)(scanlines ? (cell_h > 2 ? cell_h / 2u : 1u)
+                                                  : (cell_h > 2 ? cell_h - 1u : 1u));
+            uint16_t ox = (uint16_t)((cell_w - dot_w) / 2u);
+            uint16_t oy = (uint16_t)((cell_h - dot_h) / 2u);
+            uint32_t c = 28u + (uint32_t)lum * 16u;
+            if (c > 255u) c = 255u;
+
+            vga_fill_rect((uint16_t)(px + ox), (uint16_t)(py + oy), dot_w, dot_h,
+                          (c << 16) | (c << 8) | c);
+        }
+    }
+}
+
+static void frame_copy_to_screen_braille(const uint8_t* lumframe, uint16_t cols, uint16_t rows) {
+    uint16_t pixel_w = vga_pixel_width();
+    uint16_t pixel_h = vga_pixel_height();
+    uint16_t cell_cols = (uint16_t)((cols + 1u) / 2u);
+    uint16_t cell_rows = (uint16_t)((rows + 3u) / 4u);
+    uint16_t cell_w = cell_cols ? (uint16_t)(pixel_w / cell_cols) : 0;
+    uint16_t cell_h = cell_rows ? (uint16_t)(pixel_h / cell_rows) : 0;
+
+    if (cell_w == 0 || cell_h == 0) return;
+
+    for (uint16_t cy = 0; cy < cell_rows; cy++) {
+        for (uint16_t cx = 0; cx < cell_cols; cx++) {
+            uint16_t px = (uint16_t)(cx * cell_w);
+            uint16_t py = (uint16_t)(cy * cell_h);
+            uint16_t dot_w = (uint16_t)(cell_w / 3u ? cell_w / 3u : 1u);
+            uint16_t dot_h = (uint16_t)(cell_h / 5u ? cell_h / 5u : 1u);
+            uint16_t x_gap = (uint16_t)((cell_w > (uint16_t)(dot_w * 2u))
+                                        ? (cell_w - (uint16_t)(dot_w * 2u)) / 3u
+                                        : 1u);
+            uint16_t y_gap = (uint16_t)((cell_h > (uint16_t)(dot_h * 4u))
+                                        ? (cell_h - (uint16_t)(dot_h * 4u)) / 5u
+                                        : 1u);
+
+            vga_fill_rect(px, py, cell_w, cell_h, 0x000000);
+
+            for (uint16_t sy = 0; sy < 4; sy++) {
+                for (uint16_t sx = 0; sx < 2; sx++) {
+                    uint16_t src_x = (uint16_t)(cx * 2u + sx);
+                    uint16_t src_y = (uint16_t)(cy * 4u + sy);
+                    uint8_t lum;
+                    uint32_t c;
+
+                    if (src_x >= cols || src_y >= rows) continue;
+
+                    lum = lumframe[src_y * cols + src_x];
+                    if (lum == 0) continue;
+
+                    c = 84u + (uint32_t)lum * 18u;
+                    if (c > 255u) c = 255u;
+
+                    vga_fill_rect((uint16_t)(px + x_gap + sx * (x_gap + dot_w)),
+                                  (uint16_t)(py + y_gap + sy * (y_gap + dot_h)),
+                                  dot_w, dot_h,
+                                  (c << 16) | (c << 8) | c);
+                }
+            }
+        }
+    }
+}
+
+static void smooth_lumframe(uint8_t* dst, const uint8_t* src, uint16_t w, uint16_t h) {
+    for (uint32_t i = 0; i < (uint32_t)w * h; i++) {
+        dst[i] = src[i];
+    }
+
+    for (uint16_t y = 1; y + 1 < h; y++) {
+        for (uint16_t x = 1; x + 1 < w; x++) {
+            uint32_t idx = (uint32_t)y * w + x;
+            if (src[idx] != 0) continue;
+
+            uint32_t sum = 0;
+            uint32_t count = 0;
+
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    if (dx == 0 && dy == 0) continue;
+                    uint8_t v = src[(uint32_t)(y + dy) * w + (uint32_t)(x + dx)];
+                    if (v == 0) continue;
+                    sum += v;
+                    count++;
+                }
+            }
+
+            if (count >= 5) {
+                uint8_t fill = (uint8_t)(sum / count);
+                dst[idx] = fill > 1 ? (uint8_t)(fill - 1) : fill;
+            }
+        }
+    }
+}
+
+static void frame_copy_to_screen_chars(const uint16_t* frame, uint16_t cols, uint16_t rows) {
+    uint16_t max_cols = vga_cols();
+    uint16_t max_rows = vga_rows();
+    uint16_t start_x = max_cols > cols ? (uint16_t)((max_cols - cols) / 2u) : 0;
+    uint16_t start_y = max_rows > rows ? (uint16_t)((max_rows - rows) / 2u) : 0;
+
+    if (!g_char_prev_init) {
+        for (uint32_t i = 0; i < FRAME_CELLS; i++) {
+            g_char_prev[i] = 0xFFFFu;
+        }
+        g_char_prev_init = 1;
+    }
+
+    for (uint16_t y = 0; y < rows && (uint16_t)(start_y + y) < max_rows && y < MAX_SCREEN_H; y++) {
+        for (uint16_t x = 0; x < cols && (uint16_t)(start_x + x) < max_cols && x < MAX_SCREEN_W; x++) {
+            uint16_t cell = frame[y * cols + x];
+            if (g_char_prev[y * MAX_SCREEN_W + x] == cell) continue;
+            g_char_prev[y * MAX_SCREEN_W + x] = cell;
+            vga_write_cell((uint16_t)(start_y + y), (uint16_t)(start_x + x),
+                           (char)(cell & 0xFF), (uint8_t)((cell >> 8) & 0xFF));
+        }
+    }
+}
+
+static void frame_copy_to_screen_chars_reset(void) {
+    for (uint32_t i = 0; i < FRAME_CELLS; i++) {
+        g_char_prev[i] = 0xFFFFu;
+    }
+    g_char_prev_init = 1;
+}
+
+static void donut_render_frame(uint8_t A, uint8_t B, uint16_t* frame, uint8_t* lumframe,
+                               uint16_t screen_w, uint16_t screen_h, int title_bar) {
+    static uint16_t zbuf[GFX_FRAME_CELLS];
+    uint16_t render_h = title_bar && screen_h > 3 ? (uint16_t)(screen_h - 3u) : screen_h;
+    uint16_t start_row = title_bar && screen_h > render_h ? 1u : 0u;
+
+    for (uint32_t i = 0; i < (uint32_t)screen_w * screen_h; i++) {
         frame[i] = (uint16_t)(0x0700 | ' ');
         zbuf[i] = 0;
+        lumframe[i] = 0;
     }
 
     int32_t sinA = fsin(A), cosA = fcos(A);
     int32_t sinB = fsin(B), cosB = fcos(B);
 
-    const int cx = SCREEN_W / 2;
-    const int cy = START_ROW + (RENDER_H / 2);
+    const int cx = screen_w / 2;
+    const int cy = start_row + (render_h / 2);
 
     for (int t = 0; t < 256; t += THETA_STEP) {
         uint8_t theta = (uint8_t)t;
@@ -138,13 +313,13 @@ static void donut_render_frame(uint8_t A, uint8_t B, uint16_t* frame) {
             px = fmul(px, ZOOM_Q14);
             py = fmul(py, ZOOM_Q14);
 
-            int xp = cx + (int)(px * K1_X / 32);
-            int yp = cy - (int)(py * K1_Y / 32);
+            int xp = cx + (int)(px * (int32_t)(screen_w * 3 / 8) / 32);
+            int yp = cy - (int)(py * (int32_t)(render_h * 3 / 8) / 32);
 
-            if (xp < 0 || xp >= SCREEN_W) continue;
-            if (yp < START_ROW || yp >= (START_ROW + RENDER_H)) continue;
+            if (xp < 0 || xp >= screen_w) continue;
+            if (yp < start_row || yp >= (start_row + render_h)) continue;
 
-            int idx = yp * SCREEN_W + xp;
+            int idx = yp * screen_w + xp;
 
             int32_t L =
                 fmul(cosp, fmul(cost, sinB)) -
@@ -171,42 +346,77 @@ static void donut_render_frame(uint8_t A, uint8_t B, uint16_t* frame) {
                 }
 
                 frame[idx] = (uint16_t)(0x0700 | (uint8_t)shades[lum]);
+                lumframe[idx] = (uint8_t)(lum + 1);
             }
         }
     }
 
-    frame[0 * SCREEN_W + 0] = (uint16_t)(0x0F00 | 'D');
-    frame[0 * SCREEN_W + 1] = (uint16_t)(0x0F00 | 'o');
-    frame[0 * SCREEN_W + 2] = (uint16_t)(0x0F00 | 'n');
-    frame[0 * SCREEN_W + 3] = (uint16_t)(0x0F00 | 'u');
-    frame[0 * SCREEN_W + 4] = (uint16_t)(0x0F00 | 't');
+    if (title_bar && screen_w >= 5) {
+        frame[0] = (uint16_t)(0x0F00 | 'D');
+        frame[1] = (uint16_t)(0x0F00 | 'o');
+        frame[2] = (uint16_t)(0x0F00 | 'n');
+        frame[3] = (uint16_t)(0x0F00 | 'u');
+        frame[4] = (uint16_t)(0x0F00 | 't');
+    }
 }
 
-static void donut_build_cache(void) {
-    if (frame_cache_ready) {
-        return;
-    }
-
-    for (int i = 0; i < FRAME_COUNT; i++) {
-        uint8_t A = (uint8_t)(i * 4);
-        uint8_t B = (uint8_t)(i * 2);
-        donut_render_frame(A, B, frame_cache[i]);
-    }
-
-    frame_cache_ready = 1;
-}
-
-void donut_run(uint32_t duration_ticks) {
+void donut_run(uint32_t duration_ticks, donut_mode_t mode) {
     (void)duration_ticks;
 
     int frame_index = 0;
+    static uint16_t frame[FRAME_CELLS];
+    static uint8_t lumframe[FRAME_CELLS];
+    static uint16_t gfx_frame[GFX_FRAME_CELLS];
+    static uint8_t gfx_lumframe[GFX_FRAME_CELLS];
+    static uint8_t gfx_smooth_lumframe[GFX_FRAME_CELLS];
+    uint16_t screen_w = vga_cols();
+    uint16_t screen_h = vga_rows();
+    int graphics_mode = vga_is_framebuffer() && mode != DONUT_MODE_CHARS;
+    uint16_t gfx_w = 0;
+    uint16_t gfx_h = 0;
+    int framebuffer = vga_is_framebuffer();
+    int char_framebuffer_mode = framebuffer && mode == DONUT_MODE_CHARS;
+
+    if (screen_w > MAX_SCREEN_W) screen_w = MAX_SCREEN_W;
+    if (screen_h > MAX_SCREEN_H) screen_h = MAX_SCREEN_H;
+
+    if (graphics_mode) {
+        gfx_w = (uint16_t)(vga_pixel_width() / 4u);
+        gfx_h = (uint16_t)(vga_pixel_height() / 4u);
+        if (gfx_w > MAX_GFX_W) gfx_w = MAX_GFX_W;
+        if (gfx_h > MAX_GFX_H) gfx_h = MAX_GFX_H;
+        if (gfx_w < 48) gfx_w = 48;
+        if (gfx_h < 36) gfx_h = 36;
+    }
 
     console_clear_cancel();
-    vga_fill(' ', 0x07);
-    donut_build_cache();
+    if (char_framebuffer_mode) {
+        vga_desktop_enable(0);
+        frame_copy_to_screen_chars_reset();
+    }
+    if (!graphics_mode) {
+        screen_fill(' ', 0x07);
+    }
 
     while (!console_cancel_requested()) {
-        frame_copy_to_vga(frame_cache[frame_index]);
+        if (graphics_mode) {
+            donut_render_frame((uint8_t)(frame_index * 4), (uint8_t)(frame_index * 2),
+                               gfx_frame, gfx_lumframe, gfx_w, gfx_h, 0);
+            vga_batch_begin();
+            if (mode == DONUT_MODE_DOTS) {
+                frame_copy_to_screen_braille(gfx_lumframe, gfx_w, gfx_h);
+            } else if (mode == DONUT_MODE_SCAN) {
+                frame_copy_to_screen_dots(gfx_lumframe, gfx_w, gfx_h, 1);
+            } else {
+                smooth_lumframe(gfx_smooth_lumframe, gfx_lumframe, gfx_w, gfx_h);
+                frame_copy_to_screen_graphics(gfx_smooth_lumframe, gfx_w, gfx_h);
+            }
+            vga_batch_end();
+        } else {
+            donut_render_frame((uint8_t)(frame_index * 4), (uint8_t)(frame_index * 2),
+                               frame, lumframe, screen_w, screen_h, 1);
+            frame_copy_to_screen_chars(frame, screen_w, screen_h);
+        }
         frame_index++;
         if (frame_index >= FRAME_COUNT) {
             frame_index = 0;
@@ -215,5 +425,8 @@ void donut_run(uint32_t duration_ticks) {
     }
 
     console_clear_cancel();
-    vga_fill(' ', 0x07);
+    screen_fill(' ', 0x07);
+    if (char_framebuffer_mode) {
+        vga_desktop_enable(1);
+    }
 }

@@ -100,21 +100,25 @@ void console_begin_input(void) {
 }
 
 static void set_cursor_to_prompt_plus(size_t offset) {
+    uint16_t cols = vga_cols();
     uint16_t row = prompt_row;
     uint16_t col = (uint16_t)(prompt_col + offset);
 
-    row += (uint16_t)(col / 80);
-    col = (uint16_t)(col % 80);
+    if (cols == 0) cols = 80;
+    row += (uint16_t)(col / cols);
+    col = (uint16_t)(col % cols);
 
     vga_set_cursor(row, col);
 }
 
 static void place_sw_cursor(void) {
+    uint16_t cols = vga_cols();
     uint16_t row = prompt_row;
     uint16_t col = (uint16_t)(prompt_col + cur);
 
-    row += (uint16_t)(col / 80);
-    col = (uint16_t)(col % 80);
+    if (cols == 0) cols = 80;
+    row += (uint16_t)(col / cols);
+    col = (uint16_t)(col % cols);
 
     sw_cursor_show_at(row, col);
 }
@@ -356,7 +360,7 @@ static void sw_cursor_show_at(uint16_t row, uint16_t col) {
     uint8_t inv = invert_attr(sw_saved_attr);
 
     if (sw_saved_ch == 0 || sw_saved_ch == ' ') {
-        vga_write_cell(row, col, (char)0xDB, inv);
+        vga_write_cell(row, col, ' ', inv);
     } else {
         vga_write_cell(row, col, sw_saved_ch, inv);
     }

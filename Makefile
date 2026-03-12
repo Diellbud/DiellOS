@@ -31,6 +31,7 @@ OBJS := $(BUILD_DIR)/boot.o \
         $(BUILD_DIR)/irq_stubs.o \
         $(BUILD_DIR)/timer.o \
         $(BUILD_DIR)/keyboard.o \
+        $(BUILD_DIR)/mouse.o \
         $(BUILD_DIR)/print.o \
         $(BUILD_DIR)/panic.o \
         $(BUILD_DIR)/console.o \
@@ -94,6 +95,9 @@ $(BUILD_DIR)/timer.o: src/drivers/timer.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/keyboard.o: src/drivers/keyboard.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/mouse.o: src/drivers/mouse.c src/drivers/mouse.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/print.o: src/debug/print.c | $(BUILD_DIR)

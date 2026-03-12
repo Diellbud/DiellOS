@@ -38,7 +38,8 @@ static void cmd_help(const char* args) {
         "  mount <0-3>\n"
         "  fatls\n"
         "  fatcat <file>\n"
-        "  donut\n"
+        "  explorer\n"
+        "  donut [blocks|dots|char|scan]\n"
         "  minesweeper\n"
         "  mbr\n"
         "  cat <file>\n"
@@ -277,9 +278,22 @@ static void cmd_mbr(const char* args) {
 }
 
 static void cmd_donut(const char* args) {
-    (void)args;
+    donut_mode_t mode = DONUT_MODE_BLOCKS;
+    args = skip_spaces(args);
+
+    if (*args) {
+        if (kstrcmp(args, "blocks") == 0) mode = DONUT_MODE_BLOCKS;
+        else if (kstrcmp(args, "dots") == 0) mode = DONUT_MODE_DOTS;
+        else if (kstrcmp(args, "char") == 0 || kstrcmp(args, "chars") == 0) mode = DONUT_MODE_CHARS;
+        else if (kstrcmp(args, "scan") == 0 || kstrcmp(args, "scanlines") == 0) mode = DONUT_MODE_SCAN;
+        else {
+            vga_puts("usage: donut [blocks|dots|char|scan]\n");
+            return;
+        }
+    }
+
     vga_puts("[donut] starting...\n");
-    donut_run(800);
+    donut_run(800, mode);
     vga_puts("[donut] returned\n");
 }
 
@@ -363,6 +377,22 @@ static void cmd_fatcat(const char* args) {
     fat16_cat(args);
 }
 
+static void cmd_explorer(const char* args) {
+    (void)args;
+
+    vga_puts("Desktop readiness:\n");
+    vga_puts("  paging: enabled (identity map: first 64 MiB)\n");
+    vga_puts("  storage: ATA + MBR + FAT16 available\n");
+    vga_puts("  shell apps: donut, minesweeper\n");
+    vga_puts("  desktop shell: framebuffer background active\n");
+    vga_puts("  window manager: not implemented yet\n");
+    vga_puts("  mouse/pointer: PS/2 pointer active\n");
+    vga_puts("\nInitrd explorer:\n");
+    vfs_list();
+    vga_puts("\nFAT16 explorer:\n");
+    fat16_ls_root();
+}
+
 struct command {
     const char* name;
     cmd_fn fn;
@@ -373,6 +403,7 @@ static const struct command commands[] = {
 {"mount", cmd_mount},
     {"fatls", cmd_fatls},
 {"fatcat", cmd_fatcat},
+    {"explorer", cmd_explorer},
     {"donut", cmd_donut},
     {"minesweeper", cmd_minesweeper},
     {"mbr", cmd_mbr},
